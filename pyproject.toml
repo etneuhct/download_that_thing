@@ -1,0 +1,18 @@
+[tool.poetry]
+name = "yt_dl"
+version = "0.1.0"
+description = ""
+authors = ["jack <jack>"]
+
+[tool.poetry.dependencies]
+python = "^3.10"
+yt-dlp = "^2025.3.31"
+scrapetube = "^2.5.1"
+fastapi = {extras = ["uvicorn"], version = "^0.115.12"}
+uvicorn = "^0.34.1"
+
+[tool.poetry.dev-dependencies]
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"

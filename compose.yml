@@ -1,0 +1,31 @@
+networks:
+  traefik_default:
+    external: true
+
+services:
+  api:
+    container_name: ${PROJECT_NAME}-api
+    image: "${API_IMAGE}"
+    labels:
+      - traefik.enable=true
+      - traefik.http.middlewares.to-https.redirectscheme.scheme=websecure
+
+      - traefik.http.routers.${PROJECT_NAME}-api.entrypoints=websecure
+      - traefik.http.routers.${PROJECT_NAME}-api.rule=Host(`api.${DOMAIN_NAME}`)
+      - traefik.http.services.${PROJECT_NAME}-api.loadbalancer.server.port=8000
+      - traefik.http.routers.${PROJECT_NAME}-api-http.entrypoints=web
+      - traefik.http.routers.${PROJECT_NAME}-api-http.middlewares=to-https
+      - traefik.http.routers.${PROJECT_NAME}-api.service=${PROJECT_NAME}-api
+      - traefik.http.routers.${PROJECT_NAME}-api.tls=true
+      - traefik.http.routers.${PROJECT_NAME}-api.tls.certresolver=letsencrypt
+    volumes:
+      - download_that_thing_data:/app/data
+    restart: unless-stopped
+    networks:
+      - traefik_default
+    env_file:
+      - stack.env
+
+volumes:
+  download_that_thing_data:
+    external: true

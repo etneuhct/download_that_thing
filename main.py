@@ -1,114 +1,58 @@
 import hashlib
 import os
-import re
-import shutil
-import threading
+import subprocess
 
-import scrapetube
-import yt_dlp
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.responses import FileResponse, JSONResponse
+from pydantic import BaseModel
+
+from shared import lock, in_progress
+from youtube_channel_downloader import YoutubeChannelDownloader
 
 app = FastAPI()
 
-in_progress = set()
-lock = threading.Lock()
+active_streams = {}
 
 
-def sanitize_filename(name):
-    return re.sub(r'[\\/*?:"<>|]', "_", name)
+class LivestreamRequest(BaseModel):
+    url: str
+    duration_min: int
+    output_name: str
+    output_dir: str = "./downloads/livestreams"
 
 
-class YoutubeDownloader:
+@app.post("/start-livestream")
+def start_livestream(req: LivestreamRequest, background_tasks: BackgroundTasks):
+    stream_id = hashlib.sha256(f"{req.output_dir}/{req.output_name}".encode()).hexdigest()
 
-    def download_channel(self, channel_id):
-        channel_hash = hashlib.sha256(channel_id.encode()).hexdigest()
-        export_path = os.path.join(os.getcwd(), "exports", "channels", f"{channel_hash}.zip")
+    if stream_id in active_streams:
+        raise HTTPException(
+            status_code=400,
+            detail="Un téléchargement est déjà en cours pour ce nom."
+        )
 
-        with lock:
-            if channel_hash in in_progress:
-                print("Download already in progress.")
-                return
-            in_progress.add(channel_hash)
-
+    def run_command():
         try:
-            if os.path.exists(export_path):
-                print(f"Archive already exists at {export_path}, skipping download.")
-                return
-
-            base_folder = os.path.join(os.getcwd(), "downloads", "channels")
-            folder_path = os.path.join(base_folder, channel_hash)
-            os.makedirs(folder_path, exist_ok=True)
-
-            videos = scrapetube.get_channel(channel_id)
-            for video in videos:
-                self.download_video(video, folder_path)
-
-            YoutubeDownloader.archive_download("channels", channel_hash, folder_path)
+            cmd = [
+                "python",
+                "youtube_livestream_downloader.py",
+                "--url", req.url,
+                "--duration", str(req.duration_min),
+                "--output-name", req.output_name,
+                "--output-dir", os.path.join("./data", req.output_dir)
+            ]
+            subprocess.run(cmd)
         finally:
-            with lock:
-                in_progress.discard(channel_hash)
+            active_streams.pop(stream_id, None)
 
-    def download_playlist(self, playlist_id):
-        playlist_hash = hashlib.sha256(playlist_id.encode()).hexdigest()
-        export_path = os.path.join(os.getcwd(), "exports", "playlists", f"{playlist_hash}.zip")
+    background_tasks.add_task(run_command)
+    active_streams[stream_id] = True
 
-        with lock:
-            if playlist_hash in in_progress:
-                print("Download already in progress.")
-                return
-            in_progress.add(playlist_hash)
-
-        try:
-            if os.path.exists(export_path):
-                print(f"Archive already exists at {export_path}, skipping download.")
-                return
-
-            base_folder = os.path.join(os.getcwd(), "downloads", "playlists")
-            folder_path = os.path.join(base_folder, playlist_hash)
-            os.makedirs(folder_path, exist_ok=True)
-
-            videos = scrapetube.get_playlist(playlist_id)
-            for video in videos:
-                self.download_video(video, folder_path)
-
-            YoutubeDownloader.archive_download("playlists", playlist_hash, folder_path)
-        finally:
-            with lock:
-                in_progress.discard(playlist_hash)
-
-    @staticmethod
-    def archive_download(category, hash_id, folder_path):
-        export_base = os.path.join(os.getcwd(), "exports", category)
-        os.makedirs(export_base, exist_ok=True)
-        archive_path = os.path.join(export_base, f"{hash_id}.zip")
-        shutil.make_archive(base_name=archive_path[:-4], format='zip', root_dir=folder_path)
-        print(f"Archived to {archive_path}")
-
-    @staticmethod
-    def download_video(video, folder_path):
-        video_id = video['videoId']
-        title = video['title']['runs'][0]['text']
-        safe_title = sanitize_filename(title)
-        video_path = os.path.join(folder_path, f"{safe_title}.mp4")
-
-        if os.path.exists(video_path):
-            print(f"Skipping: {title} already exists in {folder_path}")
-            return
-
-        url = f"https://www.youtube.com/watch?v={video_id}"
-
-        ydl_opts = {
-            'outtmpl': video_path,
-            'format': 'bestvideo+bestaudio/best',
-            'merge_output_format': 'mp4',
-            'quiet': False
-        }
-
-        print(f"Downloading: {title} to {folder_path}")
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            ydl.download([url])
-
+    return {
+        "message": "Commande lancée en tâche de fond",
+        "cmd": f"python youtube_livestream_downloader.py --url {req.url} --duration {req.duration_min} --output-name {req.output_name} --output-dir {req.output_dir}",
+        "stream_id": stream_id
+    }
 
 @app.get("/download")
 def get_download(id: str, category: str, background_tasks: BackgroundTasks):
@@ -125,7 +69,7 @@ def get_download(id: str, category: str, background_tasks: BackgroundTasks):
         if hash_id in in_progress:
             return JSONResponse(content={"status": "Download already in progress."})
 
-    downloader = YoutubeDownloader()
+    downloader = YoutubeChannelDownloader()
     if category == "playlist":
         background_tasks.add_task(downloader.download_playlist, id)
     else:

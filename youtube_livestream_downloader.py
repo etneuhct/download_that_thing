@@ -1,11 +1,10 @@
 import subprocess
 import os
-import argparse
-import subprocess
-import os
 import time
 import argparse
 import signal
+import uuid
+import shutil
 
 class YouTubeLivestreamDownloader:
     def __init__(self, url: str, duration_min: int, output_name: str, output_dir: str = "./downloads"):
@@ -13,7 +12,10 @@ class YouTubeLivestreamDownloader:
         self.duration_sec = duration_min * 60
         self.output_name = output_name
         self.output_dir = output_dir
+        self.temp_dir = os.path.join("./temp", str(uuid.uuid4()))
+
         os.makedirs(self.output_dir, exist_ok=True)
+        os.makedirs(self.temp_dir, exist_ok=True)
 
     def record(self):
         print("Obtention du lien direct HLS via yt-dlp...")
@@ -29,7 +31,8 @@ class YouTubeLivestreamDownloader:
             print("Impossible d'extraire l'URL du flux HLS.")
             return
 
-        output_path = os.path.join(self.output_dir, self.output_name + ".ts")
+        temp_path = os.path.join(self.temp_dir, self.output_name + ".ts")
+        final_path = os.path.join(self.output_dir, self.output_name + ".ts")
 
         print(f"Téléchargement en cours pendant {self.duration_sec} secondes...")
         print(f"Flux HLS : {hls_url}")
@@ -39,23 +42,31 @@ class YouTubeLivestreamDownloader:
             "-y",
             "-i", hls_url,
             "-c", "copy",
-            output_path
+            temp_path
         ]
 
-        # Démarre ffmpeg
         process = subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
 
         try:
             time.sleep(self.duration_sec)
             print("Durée atteinte. Envoi d'un signal d'arrêt à ffmpeg...")
-            process.send_signal(signal.SIGINT)  # Ctrl+C simulé pour qu'il ferme correctement
+            process.send_signal(signal.SIGINT)
             process.wait()
         except KeyboardInterrupt:
             print("Arrêt manuel détecté. Fermeture de ffmpeg...")
             process.terminate()
             process.wait()
 
-        print("Téléchargement terminé.")
+        if os.path.exists(temp_path):
+            shutil.move(temp_path, final_path)
+            print(f"Fichier déplacé vers : {final_path}")
+        else:
+            print("Aucun fichier à déplacer.")
+
+        # Nettoyage du dossier temporaire
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
+        print("Téléchargement terminé et dossier temporaire nettoyé.")
+
 
 
 if __name__ == "__main__":
